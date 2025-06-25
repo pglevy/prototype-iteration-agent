@@ -3,6 +3,7 @@ import './App.css'
 import { Switch, Route } from 'wouter'
 import Home from "@/pages/home"
 import NotFound from "@/pages/not-found"
+import GeneratedPrototype from "@/components/GeneratedPrototype";
 
 // Using Vite's glob import - updated to include subdirectories with **
 const pages = import.meta.glob('@/pages/**/*.{js,jsx,ts,tsx}');
@@ -54,7 +55,9 @@ function Router() {
 
 function App() {
   return (
-    <Router />
+    <div className="App">
+      <GeneratedPrototype />
+    </div>
   )
 }
 
