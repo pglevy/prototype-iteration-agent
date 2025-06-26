@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import OpenAI from 'openai';
 import { chromium } from 'playwright';
 import dotenv from 'dotenv';
+import readline from 'readline';
 
 // Load environment variables
 dotenv.config();
@@ -20,7 +21,8 @@ const CONFIG = {
   viteUrl: 'http://localhost:5173',
   openaiApiKey: process.env.OPENAI_API_KEY,
   maxIterations: 5,
-  feedbackThreshold: 0.8 // 80% positive feedback to stop
+  feedbackThreshold: 0.8, // 80% positive feedback to stop
+  allowHumanInput: true // Allow human to continue past threshold
 };
 
 // Initialize OpenAI
@@ -32,6 +34,54 @@ class PrototypeOrchestrator {
   constructor() {
     this.currentIteration = 0;
     this.feedbackHistory = [];
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+  }
+
+  async askHumanInput(feedback, visualFeedback) {
+    if (!CONFIG.allowHumanInput) return false;
+    
+    console.log('\n🤔 Threshold reached, but there are still some areas for improvement:');
+    
+    if (feedback.issues && feedback.issues.length > 0) {
+      console.log('\n📋 UX Issues identified:');
+      feedback.issues.forEach((issue, i) => console.log(`  ${i + 1}. ${issue}`));
+    }
+    
+    if (visualFeedback.designIssues && visualFeedback.designIssues.length > 0) {
+      console.log('\n🎨 Visual Design Issues identified:');
+      visualFeedback.designIssues.forEach((issue, i) => console.log(`  ${i + 1}. ${issue}`));
+    }
+    
+    if (feedback.improvements && feedback.improvements.length > 0) {
+      console.log('\n💡 Suggested UX Improvements:');
+      feedback.improvements.forEach((improvement, i) => console.log(`  ${i + 1}. ${improvement}`));
+    }
+    
+    if (visualFeedback.designImprovements && visualFeedback.designImprovements.length > 0) {
+      console.log('\n🎯 Suggested Visual Improvements:');
+      visualFeedback.designImprovements.forEach((improvement, i) => console.log(`  ${i + 1}. ${improvement}`));
+    }
+    
+    console.log('\n');
+    
+    return new Promise((resolve) => {
+      this.rl.question('Would you like to run another iteration to address these issues? (y/N): ', (answer) => {
+        const shouldContinue = answer.toLowerCase().startsWith('y');
+        if (!shouldContinue) {
+          console.log('✅ Proceeding with current prototype.');
+        } else {
+          console.log('🔄 Running additional iteration...');
+        }
+        resolve(shouldContinue);
+      });
+    });
+  }
+
+  closeInput() {
+    this.rl.close();
   }
 
   async generatePrototype(designPrompt) {
@@ -535,7 +585,19 @@ ${visualFeedback.designImprovements.join('\n')}`;
       // Check if we've reached the threshold
       if (feedback.overallScore >= CONFIG.feedbackThreshold) {
         console.log(`\n🎉 Success! Reached feedback threshold of ${CONFIG.feedbackThreshold}`);
-        break;
+        
+        // Check if there are still issues and ask human if they want to continue
+        const hasIssues = (feedback.issues && feedback.issues.length > 0) || 
+                         (visualFeedback.designIssues && visualFeedback.designIssues.length > 0);
+        
+        if (hasIssues && i < CONFIG.maxIterations - 1) {
+          const shouldContinue = await this.askHumanInput(feedback, visualFeedback);
+          if (!shouldContinue) {
+            break;
+          }
+        } else {
+          break;
+        }
       }
       
       // Improve for next iteration
@@ -548,6 +610,9 @@ ${visualFeedback.designImprovements.join('\n')}`;
     this.feedbackHistory.forEach(entry => {
       console.log(`Iteration ${entry.iteration}: ${entry.score}`);
     });
+    
+    // Close readline interface
+    this.closeInput();
     
     // Save final report
     const report = {
@@ -567,11 +632,18 @@ async function main() {
   
   const designPrompt = process.argv[2] || "Create a modern todo list app with add, delete, and mark complete functionality. Use a clean, minimalist design with good spacing and hover effects.";
   const skipGeneration = process.argv.includes('--skip-generation') || process.argv.includes('-s');
+  const noHumanInput = process.argv.includes('--no-human-input') || process.argv.includes('-n');
+  
+  // Override config if flag is provided
+  if (noHumanInput) {
+    CONFIG.allowHumanInput = false;
+  }
   
   try {
     await orchestrator.runWorkflow(designPrompt, skipGeneration);
   } catch (error) {
     console.error('❌ Workflow failed:', error);
+    process.exit(1);
   }
 }
 
