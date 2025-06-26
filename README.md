@@ -111,20 +111,36 @@ npm start
 node orchestrator.js "Create a user profile card with avatar, name, bio, and social links"
 ```
 
+### Skip prototype generation (use existing component)
+```bash
+# Use existing GeneratedPrototype.tsx and run only testing/feedback
+node orchestrator.js "Your design prompt here" --skip-generation
+# or
+node orchestrator.js "Your design prompt here" -s
+```
+
+**When to use `--skip-generation`:**
+- Testing workflow fixes when prototype generation works but other steps fail
+- Using your own custom prototype (paste code into `GeneratedPrototype.tsx`)
+- Iterative development after initial generation
+- The design prompt is still used for visual feedback analysis
+
 ## 6. What Happens During Execution
 
-1. **Generation**: LLM creates React component → saves to your Vite project
+1. **Generation**: LLM creates React component → saves to your Vite project (unless skipped)
 2. **Auto-reload**: Vite hot-reloads the new component
-3. **Testing**: Playwright opens browser → interacts with your localhost
-4. **Feedback**: Testing LLM analyzes interactions → provides scored feedback
-5. **Iteration**: If score < threshold, LLM improves the component
-6. **Repeat**: Until threshold met or max iterations reached
+3. **Testing**: Playwright opens browser → interacts with your localhost → captures screenshots
+4. **Visual Analysis**: GPT-4 Vision analyzes screenshots for design quality
+5. **Feedback**: Testing LLM combines functional and visual feedback → provides scored feedback
+6. **Iteration**: If score < threshold, LLM improves the component based on both UX and visual feedback
+7. **Repeat**: Until threshold met or max iterations reached
 
 ## 7. Outputs
 
 - **Screenshots**: `screenshots/` folder with visual progression
-- **Final Report**: `final-report.json` with complete iteration history
+- **Final Report**: `final-report.json` with complete iteration history including visual feedback
 - **Updated Component**: Your Vite project will have the final version
+- **Console Output**: Shows both functional scores and visual design scores for each iteration
 
 ## 8. Customization Options
 
@@ -147,6 +163,13 @@ const browser = await chromium.launch({ headless: true });
 ### Add custom test scenarios
 Modify the `generateTestPlan` method to include domain-specific tests.
 
+### Disable visual feedback
+To run without GPT-4 Vision analysis, comment out the visual feedback line:
+```javascript
+// const visualFeedback = await this.getVisualDesignFeedback(testResults.screenshot, designPrompt);
+const visualFeedback = null;
+```
+
 ## 9. Troubleshooting
 
 ### Common Issues:
@@ -154,6 +177,8 @@ Modify the `generateTestPlan` method to include domain-specific tests.
 - **File path errors**: Double-check the `viteProjectPath` in CONFIG
 - **OpenAI API**: Ensure your API key is valid and has sufficient credits
 - **Playwright**: If browser doesn't launch, try `npx playwright install`
+- **Visual feedback errors**: GPT-4 Vision requires sufficient API credits and may have rate limits
+- **Skip generation**: If using `--skip-generation`, ensure `GeneratedPrototype.tsx` exists
 
 ### Debug Mode:
 Set `headless: false` in Playwright config to watch the browser interactions in real-time.

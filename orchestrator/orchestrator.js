@@ -283,10 +283,99 @@ Return a JSON object with this exact structure:
     return checks;
   }
 
-  async getLLMFeedback(testResults, testPlan) {
+  async getVisualDesignFeedback(screenshotPath, designPrompt) {
+    console.log('🎨 Getting visual design feedback...');
+    
+    try {
+      const imageBuffer = await fs.readFile(screenshotPath);
+      const base64Image = imageBuffer.toString('base64');
+      
+      const systemPrompt = `You are a UI/UX design expert analyzing a screenshot of a web interface. Provide detailed visual design feedback focusing on:
+
+- Visual hierarchy and layout
+- Typography and readability
+- Color scheme and contrast
+- Spacing and alignment
+- Component design and consistency
+- Overall aesthetic appeal
+- Accessibility considerations
+
+CRITICAL: Return ONLY valid JSON, no explanations or additional text. The response must start with { and end with }.
+
+Return a JSON object with this exact structure:
+{
+  "visualScore": 0.85,
+  "designPositives": ["Good visual aspect 1", "Good visual aspect 2"],
+  "designIssues": ["Visual issue 1", "Visual issue 2"],
+  "designImprovements": ["Visual suggestion 1", "Visual suggestion 2"],
+  "visualReasoning": "Detailed explanation of the visual design score"
+}
+
+Score should be between 0 and 1 (e.g., 0.85 for 85%).`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { 
+            role: "user", 
+            content: [
+              {
+                type: "text",
+                text: `Design prompt: ${designPrompt}\n\nPlease analyze this screenshot and provide visual design feedback.`
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${base64Image}`
+                }
+              }
+            ]
+          }
+        ],
+        temperature: 0.1
+      });
+
+      let content = response.choices[0].message.content.trim();
+      
+      // Try to extract JSON if the response includes extra text
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        content = jsonMatch[0];
+      }
+      
+      try {
+        const feedback = JSON.parse(content);
+        console.log(`🎨 Visual design score: ${feedback.visualScore}`);
+        return feedback;
+      } catch (error) {
+        console.log('❌ Failed to parse visual feedback JSON, using fallback');
+        console.log('Raw response:', content);
+        
+        return {
+          visualScore: 0.5,
+          designPositives: ["Interface is visible and rendered"],
+          designIssues: ["Unable to analyze visual details"],
+          designImprovements: ["Ensure proper visual hierarchy"],
+          visualReasoning: "Fallback response due to JSON parsing error"
+        };
+      }
+    } catch (error) {
+      console.log('❌ Error analyzing screenshot:', error.message);
+      return {
+        visualScore: 0.3,
+        designPositives: [],
+        designIssues: ["Screenshot could not be analyzed"],
+        designImprovements: ["Ensure screenshot is properly captured"],
+        visualReasoning: "Could not analyze screenshot"
+      };
+    }
+  }
+
+  async getLLMFeedback(testResults, testPlan, visualFeedback = null) {
     console.log('🤖 Getting LLM feedback on test results...');
     
-    const systemPrompt = `You are a UX testing expert analyzing test results. Provide structured feedback on the prototype's usability.
+    const systemPrompt = `You are a UX testing expert analyzing test results and visual design feedback. Provide structured feedback on the prototype's usability.
 
 CRITICAL: Return ONLY valid JSON, no explanations or additional text. The response must start with { and end with }.
 
@@ -299,13 +388,15 @@ Return a JSON object with this exact structure:
   "reasoning": "Detailed explanation of the score"
 }
 
-Score should be between 0 and 1 (e.g., 0.85 for 85%).`;
+Score should be between 0 and 1 (e.g., 0.85 for 85%). Consider both functional testing results and visual design feedback if provided.`;
+
+    const userContent = `Test Plan: ${JSON.stringify(testPlan, null, 2)}\n\nTest Results: ${JSON.stringify(testResults, null, 2)}${visualFeedback ? `\n\nVisual Design Feedback: ${JSON.stringify(visualFeedback, null, 2)}` : ''}`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Test Plan: ${JSON.stringify(testPlan, null, 2)}\n\nTest Results: ${JSON.stringify(testResults, null, 2)}` }
+        { role: "user", content: userContent }
       ],
       temperature: 0.1
     });
@@ -337,26 +428,32 @@ Score should be between 0 and 1 (e.g., 0.85 for 85%).`;
     }
   }
 
-  async improvePrototype(currentCode, feedback) {
+  async improvePrototype(currentCode, feedback, visualFeedback) {
     console.log('🔧 Improving prototype based on feedback...');
     
-    const systemPrompt = `You are a React TypeScript developer improving a component based on UX feedback. 
+    const systemPrompt = `You are a React TypeScript developer improving a component based on UX and visual design feedback. 
 
 CRITICAL INSTRUCTIONS:
 - Return ONLY the raw TypeScript React code, no markdown formatting, no code blocks, no explanations
 - Do NOT wrap the code in \`\`\`jsx or \`\`\`tsx or any other formatting
 - The response should start directly with "import" and end with the component export
 - Keep the core functionality intact
-- Address the specific issues mentioned in the feedback
-- Implement the suggested improvements
+- Address the specific issues mentioned in both UX and visual feedback
+- Implement the suggested improvements for both usability and visual design
 - Use modern React patterns and Tailwind CSS
 - Use TypeScript with proper type annotations
 
-Current issues to address:
+UX Issues to address:
 ${feedback.issues.join('\n')}
 
-Suggested improvements:
-${feedback.improvements.join('\n')}`;
+UX Improvements:
+${feedback.improvements.join('\n')}
+
+Visual Design Issues to address:
+${visualFeedback.designIssues.join('\n')}
+
+Visual Design Improvements:
+${visualFeedback.designImprovements.join('\n')}`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4",
@@ -386,14 +483,28 @@ ${feedback.improvements.join('\n')}`;
     return improvedCode;
   }
 
-  async runWorkflow(designPrompt) {
+  async runWorkflow(designPrompt, skipGeneration = false) {
     console.log('🚀 Starting agentic prototyping workflow...');
     console.log(`Design prompt: ${designPrompt}\n`);
     
     // Create screenshots directory
     await fs.mkdir('screenshots', { recursive: true });
     
-    let currentCode = await this.generatePrototype(designPrompt);
+    let currentCode;
+    if (skipGeneration) {
+      console.log('⏭️ Skipping prototype generation, using existing component...');
+      // Read existing component
+      const componentPath = path.join(__dirname, CONFIG.viteProjectPath, 'src/components/GeneratedPrototype.tsx');
+      try {
+        currentCode = await fs.readFile(componentPath, 'utf8');
+        console.log('✅ Using existing prototype component');
+      } catch (error) {
+        console.log('❌ No existing component found, generating new one...');
+        currentCode = await this.generatePrototype(designPrompt);
+      }
+    } else {
+      currentCode = await this.generatePrototype(designPrompt);
+    }
     
     for (let i = 0; i < CONFIG.maxIterations; i++) {
       this.currentIteration = i + 1;
@@ -404,18 +515,22 @@ ${feedback.improvements.join('\n')}`;
       
       const testPlan = await this.generateTestPlan(currentCode);
       const testResults = await this.runPlaywrightTests(testPlan);
-      const feedback = await this.getLLMFeedback(testResults, testPlan);
+      const visualFeedback = await this.getVisualDesignFeedback(testResults.screenshot, designPrompt);
+      const feedback = await this.getLLMFeedback(testResults, testPlan, visualFeedback);
       
       this.feedbackHistory.push({
         iteration: this.currentIteration,
         score: feedback.overallScore,
-        feedback
+        feedback,
+        visualFeedback
       });
       
       console.log(`\n📊 Iteration ${this.currentIteration} Results:`);
-      console.log(`Score: ${feedback.overallScore}`);
+      console.log(`Overall Score: ${feedback.overallScore}`);
+      console.log(`Visual Score: ${visualFeedback.visualScore}`);
       console.log(`Positives: ${feedback.positives.join(', ')}`);
       console.log(`Issues: ${feedback.issues.join(', ')}`);
+      console.log(`Visual Issues: ${visualFeedback.designIssues.join(', ')}`);
       
       // Check if we've reached the threshold
       if (feedback.overallScore >= CONFIG.feedbackThreshold) {
@@ -425,7 +540,7 @@ ${feedback.improvements.join('\n')}`;
       
       // Improve for next iteration
       if (i < CONFIG.maxIterations - 1) {
-        currentCode = await this.improvePrototype(currentCode, feedback);
+        currentCode = await this.improvePrototype(currentCode, feedback, visualFeedback);
       }
     }
     
@@ -451,9 +566,10 @@ async function main() {
   const orchestrator = new PrototypeOrchestrator();
   
   const designPrompt = process.argv[2] || "Create a modern todo list app with add, delete, and mark complete functionality. Use a clean, minimalist design with good spacing and hover effects.";
+  const skipGeneration = process.argv.includes('--skip-generation') || process.argv.includes('-s');
   
   try {
-    await orchestrator.runWorkflow(designPrompt);
+    await orchestrator.runWorkflow(designPrompt, skipGeneration);
   } catch (error) {
     console.error('❌ Workflow failed:', error);
   }
