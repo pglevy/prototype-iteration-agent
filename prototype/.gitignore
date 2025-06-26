@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated prototypes
+src/components/GeneratedPrototype.tsx
